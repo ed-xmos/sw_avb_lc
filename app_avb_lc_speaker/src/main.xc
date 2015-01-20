@@ -282,6 +282,12 @@ int main(void)
     return 0;
 }
 
+static unsigned abs(int x)
+{
+  int const mask = x >> sizeof(int) * 8 - 1;
+  return (x + mask) ^ mask;
+}
+
 /** The main application control task **/
 [[combinable]]
 void application_task(client interface avb_interface avb, server interface avb_1722_1_control_callbacks i_1722_1_entity)
@@ -291,6 +297,12 @@ void application_task(client interface avb_interface avb, server interface avb_1
   unsigned buttons_timeout;
   int selected_chan = 0;
   timer button_tmr;
+
+  unsigned lr_channel_assignment[2] = {0, 1};
+  int lr_volume[2] = {0, 0};
+  unsigned char lr_mute[2] = {0, 0};
+  unsigned char mute_reg_val[1] = {0};
+  int sink_map[AVB_MAX_CHANNELS_PER_LISTENER_STREAM] = {0, 1, -1, -1, -1, -1, -1, -1};
 
   p_mute_led_remote <: ~0;
   if (AVB_NUM_SINKS > 0) {
@@ -411,6 +423,23 @@ void application_task(client interface avb_interface avb, server interface avb_1
               values_length = 1;
               return_status = AECP_AEM_STATUS_SUCCESS;
             break;
+          case DESCRIPTOR_INDEX_CONTROL_GAIN_LEFT:  // 0
+          case DESCRIPTOR_INDEX_CONTROL_GAIN_RIGHT: // 1
+          {
+            value_size = values_length = AEM_CONTROL_SIZE_LINEAR_INT16;
+            HTON_U16(values, lr_volume[control_index]);
+            return_status = AECP_AEM_STATUS_SUCCESS;
+            break;
+          }
+          case DESCRIPTOR_INDEX_CONTROL_MUTE_LEFT:  // 2
+          case DESCRIPTOR_INDEX_CONTROL_MUTE_RIGHT: // 3
+          {
+            const unsigned channel = control_index-2;
+            value_size = values_length = AEM_CONTROL_SIZE_LINEAR_UINT8;
+            values[0] = lr_volume[channel];
+            return_status = AECP_AEM_STATUS_SUCCESS;
+            break;
+          }
         }
 
         break;
@@ -438,6 +467,51 @@ void application_task(client interface avb_interface avb, server interface avb_1
             }
             break;
           }
+          case DESCRIPTOR_INDEX_CONTROL_GAIN_LEFT:  // 0
+          case DESCRIPTOR_INDEX_CONTROL_GAIN_RIGHT: // 1
+          {
+            if (values_length == AEM_CONTROL_SIZE_LINEAR_INT16) {
+              short volume = NTOH_U16(values);
+              if (volume > 0 || volume < -64) {
+                return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
+                break;
+              }
+              lr_volume[control_index] = volume;
+              unsigned char volume_reg_val[1];
+              volume_reg_val[0] = abs(lr_volume[control_index]) << 1;
+              debug_printf("Setting chan %d volume to %d db (register val 0x%x)\n", control_index, volume, volume_reg_val[0]);
+//              i2c_master_write_reg(0x48, CODEC_DACA_VOL_ADDR+control_index, volume_reg_val, 1, r_i2c);
+              return_status = AECP_AEM_STATUS_SUCCESS;
+            }
+            else {
+              return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
+            }
+            break;
+          }
+          case DESCRIPTOR_INDEX_CONTROL_MUTE_LEFT:  // 2
+          case DESCRIPTOR_INDEX_CONTROL_MUTE_RIGHT: // 3
+          {
+            if (values_length == AEM_CONTROL_SIZE_LINEAR_UINT8) {
+              const unsigned channel = control_index-2;
+              if (values[0] == 0) {
+                mute_reg_val[0] &= ~(1 << channel); // Unmute
+                debug_printf("Unmuting channel %d\n", channel);
+              } else if (values[0] == 255) {
+                debug_printf("Muting channel %d\n", channel);
+                mute_reg_val[0] |= (1 << channel); // Mute
+              } else {
+                return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
+                break;
+              }
+              lr_mute[channel] = values[0];
+//              i2c_master_write_reg(0x48, CODEC_MUTE_CTRL_ADDR, mute_reg_val, 1, r_i2c);
+              return_status = AECP_AEM_STATUS_SUCCESS;
+            }
+            else {
+              return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
+            }
+            break;
+          }
         }
 
 
@@ -450,6 +524,17 @@ void application_task(client interface avb_interface avb, server interface avb_1
                                                unsigned short &signal_output) -> unsigned char return_status:
       {
         return_status = AECP_AEM_STATUS_NO_SUCH_DESCRIPTOR;
+        switch (selector_index) {
+          case DESCRIPTOR_INDEX_SELECTOR_LEFT:
+          case DESCRIPTOR_INDEX_SELECTOR_RIGHT:
+          {
+            signal_type = AEM_AUDIO_CLUSTER_TYPE;
+            signal_index = lr_channel_assignment[selector_index];
+            signal_output = 0;
+            return_status = AECP_AEM_STATUS_SUCCESS;
+            break;
+          }
+        }
         break;
       }
       case i_1722_1_entity.set_signal_selector(unsigned short selector_index,
@@ -458,6 +543,25 @@ void application_task(client interface avb_interface avb, server interface avb_1
                                                unsigned short signal_output) -> unsigned char return_status:
       {
         return_status = AECP_AEM_STATUS_NO_SUCH_DESCRIPTOR;
+
+        switch (selector_index) {
+          case DESCRIPTOR_INDEX_SELECTOR_LEFT:
+          case DESCRIPTOR_INDEX_SELECTOR_RIGHT:
+          {
+            if (signal_type != AEM_AUDIO_CLUSTER_TYPE ||
+                signal_index >= AVB_MAX_CHANNELS_PER_LISTENER_STREAM) {
+              return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
+              break;
+            }
+            sink_map[lr_channel_assignment[selector_index]] = -1; // Clear current map value
+            sink_map[signal_index] = selector_index; // Set new map value
+            lr_channel_assignment[selector_index] = signal_index; // Store value
+            avb.set_sink_map(0, sink_map, AVB_MAX_CHANNELS_PER_LISTENER_STREAM);
+
+            return_status = AECP_AEM_STATUS_SUCCESS;
+            break;
+          }
+        }
         break;
       }
     }
