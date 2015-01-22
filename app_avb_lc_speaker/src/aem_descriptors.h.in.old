@@ -116,8 +116,9 @@ unsigned char desc_audio_unit_0[] =
   U16(0),                                     /* base_control_block */
   U32(48000),                                 /* current_sample_rate */
   U16(144),                                   /* sample_rates_offset */
-  U16(1),                                     /* sample_rates_count */
+  U16(2),                                     /* sample_rates_count */
   /* sample_rates */
+  U32(44100),
   U32(48000)
 };
 
@@ -325,7 +326,7 @@ unsigned char desc_external_output_port_0[] =
 /* Control Descriptors */
 
 /* Identify */
-unsigned char desc_control_identify[] =
+ unsigned char desc_control_identify[] =
 {
   U16(AEM_CONTROL_TYPE),                      /* 0-1 descriptor_type */
   U16(DESCRIPTOR_INDEX_CONTROL_IDENTIFY),     /* 2-3 descriptor_id */
@@ -351,7 +352,6 @@ unsigned char desc_control_identify[] =
   U16(AEM_CONTROL_UNITS_UNITLESS),            /* unit[0] */
   U16(AEM_NO_STRING)                            /* string[0] */
 };
-
 
 /* Stream Descriptors */
 
