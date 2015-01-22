@@ -3,6 +3,13 @@
 
 #include "app_config.h"
 
+/* These audio parameters need to be set before Ethernet */
+
+/** The maximum number of channels permitted per 1722 Talker stream */
+#define AVB_MAX_CHANNELS_PER_TALKER_STREAM AVB_DEMO_NUM_CHANNELS
+/** The maximum number of channels permitted per 1722 Listener stream */
+#define AVB_MAX_CHANNELS_PER_LISTENER_STREAM    8 /* For AVB speaker - selects 2 of 8 channels */
+
 /* Some of the configuration depends on the app_config.h file included above */
 
 /******** ETHERNET MAC CONFIGURATION PARAMETERS *************************************************/
@@ -15,7 +22,7 @@
 #define ETHERNET_TX_HP_QUEUE 1
 #define MAX_ETHERNET_CLIENTS   4
 
-#define ETHERNET_MAX_TX_HP_PACKET_SIZE (100 + AVB_DEMO_NUM_CHANNELS * 24)
+#define ETHERNET_MAX_TX_HP_PACKET_SIZE (100 + AVB_MAX_CHANNELS_PER_LISTENER_STREAM * 24)
 #define ETHERNET_MAX_TX_LP_PACKET_SIZE (600)
 
 #define MII_RX_BUFSIZE_HIGH_PRIORITY (1100 + (3*(ETHERNET_MAX_TX_HP_PACKET_SIZE)))
@@ -75,11 +82,6 @@
 
 #endif
 
-/** The maximum number of channels permitted per 1722 Talker stream */
-#define AVB_MAX_CHANNELS_PER_TALKER_STREAM AVB_DEMO_NUM_CHANNELS
-/** The maximum number of channels permitted per 1722 Listener stream */
-#define AVB_MAX_CHANNELS_PER_LISTENER_STREAM AVB_DEMO_NUM_CHANNELS
-
 /** Enable combination of the media clock server and PTP server in a single core */
 #define COMBINE_MEDIA_CLOCK_AND_PTP 1
 
@@ -116,11 +118,11 @@
 #define AVB_1722_1_ADP_MODEL_ID 0x1234
 
 enum aem_control_indices {
-    DESCRIPTOR_INDEX_CONTROL_IDENTIFY = 0,
-    DESCRIPTOR_INDEX_CONTROL_GAIN_LEFT,
+    DESCRIPTOR_INDEX_CONTROL_GAIN_LEFT = 0,
     DESCRIPTOR_INDEX_CONTROL_GAIN_RIGHT,
     DESCRIPTOR_INDEX_CONTROL_MUTE_LEFT,
-    DESCRIPTOR_INDEX_CONTROL_MUTE_RIGHT
+    DESCRIPTOR_INDEX_CONTROL_MUTE_RIGHT,
+    DESCRIPTOR_INDEX_CONTROL_IDENTIFY
 };
 
 enum aem_selector_indices {
@@ -131,8 +133,10 @@ enum aem_selector_indices {
 /** Enable 1722.1 Controller functionality on the entity. */
 #define AVB_1722_1_CONTROLLER_ENABLED 0
 
-
 /** Enable SRP auto-start and auto-stop a stream when Listeners come and go */
 #define SRP_AUTO_TALKER_STREAM_CONTROL 1
+
+/* Disable memory saving dyanmic descriptors and make static */
+#define AEM_GENERATE_DESCRIPTORS_ON_FLY 0
 
 #endif

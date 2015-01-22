@@ -108,7 +108,8 @@ media_input_fifo_t ififos[AVB_NUM_MEDIA_INPUTS];
 
 [[combinable]] void application_task(client interface avb_interface avb, server interface avb_1722_1_control_callbacks i_1722_1_entity);
 
-[[distributable]] void audio_hardware_setup(void)
+//[[distributable]]
+ void audio_hardware_setup(void)
 {
 #if PLL_TYPE_CS2100
   audio_clock_CS2100CP_init(r_i2c, MASTER_TO_WORDCLOCK_RATIO);
@@ -121,11 +122,6 @@ media_input_fifo_t ififos[AVB_NUM_MEDIA_INPUTS];
   audio_codec_CS4270_init(p_audio_shared, 0xff, codec1_addr, r_i2c);
   audio_codec_CS4270_init(p_audio_shared, 0xff, codec2_addr, r_i2c);
 #endif
-
-  while (1) {
-    select {
-    }
-  }
 }
 
 enum mac_rx_chans {
@@ -213,7 +209,7 @@ int main(void)
                                    c_ptp, NUM_PTP_CHANS,
                                    PTP_GRANDMASTER_CAPABLE);
 
-    on tile[AVB_I2C_TILE]: [[distribute]] audio_hardware_setup();
+//    on tile[AVB_I2C_TILE]: [[distribute]] audio_hardware_setup();
 
     // AVB - Audio
     on tile[0]:
@@ -292,122 +288,31 @@ static unsigned abs(int x)
 [[combinable]]
 void application_task(client interface avb_interface avb, server interface avb_1722_1_control_callbacks i_1722_1_entity)
 {
-  int button_val;
-  int buttons_active = 1;
-  unsigned buttons_timeout;
-  int selected_chan = 0;
-  timer button_tmr;
-
+  const unsigned default_sample_rate = 48000;
   unsigned lr_channel_assignment[2] = {0, 1};
   int lr_volume[2] = {0, 0};
   unsigned char lr_mute[2] = {0, 0};
   unsigned char mute_reg_val[1] = {0};
   int sink_map[AVB_MAX_CHANNELS_PER_LISTENER_STREAM] = {0, 1, -1, -1, -1, -1, -1, -1};
-
-  p_mute_led_remote <: ~0;
-  if (AVB_NUM_SINKS > 0) {
-    p_chan_leds <: ~(1 << selected_chan);
-  }
-  else {
-    p_chan_leds <: ~(0);
-  }
-  p_buttons :> button_val;
-
-#if AVB_DEMO_ENABLE_TALKER
-  const int channels_per_stream = AVB_NUM_MEDIA_INPUTS/AVB_NUM_SOURCES;
-  int map[AVB_NUM_MEDIA_INPUTS/AVB_NUM_SOURCES];
-#endif
-  const unsigned default_sample_rate = 48000;
   unsigned char aem_identify_control_value = 0;
+
+  audio_hardware_setup();
 
   // Initialize the media clock
   avb.set_device_media_clock_type(0, DEVICE_MEDIA_CLOCK_INPUT_STREAM_DERIVED);
   avb.set_device_media_clock_rate(0, default_sample_rate);
   avb.set_device_media_clock_state(0, DEVICE_MEDIA_CLOCK_STATE_ENABLED);
 
-#if AVB_DEMO_ENABLE_TALKER
-  for (int j=0; j < AVB_NUM_SOURCES; j++)
-  {
-    avb.set_source_channels(j, channels_per_stream);
-    for (int i = 0; i < channels_per_stream; i++)
-      map[i] = j ? j*(channels_per_stream)+i  : j+i;
-    avb.set_source_map(j, map, channels_per_stream);
-    avb.set_source_format(j, AVB_SOURCE_FORMAT_MBLA_24BIT, default_sample_rate);
-    avb.set_source_sync(j, 0); // use the media_clock defined above
-  }
-#endif
-
   avb.set_sink_format(0, AVB_SOURCE_FORMAT_MBLA_24BIT, default_sample_rate);
+  avb.set_sink_sync(0, 0);
+  avb.set_sink_channels(0, AVB_MAX_CHANNELS_PER_LISTENER_STREAM);
+  avb.set_sink_map(0, sink_map, AVB_MAX_CHANNELS_PER_LISTENER_STREAM);
 
+  debug_printf("Start app\n");
   while (1)
   {
     select
     {
-#if (AVB_NUM_SINKS > 0)
-      case buttons_active => p_buttons when pinsneq(button_val) :> unsigned new_button_val:
-      {
-        if ((button_val & CHAN_SEL) == CHAN_SEL && (new_button_val & CHAN_SEL) == 0)
-        {
-          selected_chan++;
-          if (selected_chan > ((AVB_NUM_MEDIA_OUTPUTS>>1)-1))
-          {
-            selected_chan = 0;
-          }
-          p_chan_leds <: ~(1 << selected_chan);
-          if (AVB_NUM_MEDIA_OUTPUTS > 2)
-          {
-            int map[AVB_NUM_MEDIA_OUTPUTS/AVB_NUM_SINKS];
-            int len;
-            enum avb_sink_state_t cur_state[AVB_NUM_SINKS];
-
-            for (int i=0; i < AVB_NUM_SINKS; i++)
-            {
-              avb.get_sink_state(i, cur_state[i]);
-              if (cur_state[i] != AVB_SINK_STATE_DISABLED)
-                avb.set_sink_state(i, AVB_SINK_STATE_DISABLED);
-            }
-
-            for (int i=0; i < AVB_NUM_SINKS; i++)
-            {
-              avb.get_sink_map(i, map, len);
-              for (int j=0;j<len;j++)
-              {
-                if (map[j] != -1)
-                {
-                  map[j] += 2;
-
-                  if (map[j] > AVB_NUM_MEDIA_OUTPUTS-1)
-                  {
-                    map[j] = map[j]%AVB_NUM_MEDIA_OUTPUTS;
-                  }
-                }
-              }
-              avb.set_sink_map(i, map, len);
-            }
-
-            for (int i=0; i < AVB_NUM_SINKS; i++)
-            {
-              if (cur_state[i] != AVB_SINK_STATE_DISABLED)
-                avb.set_sink_state(i, AVB_SINK_STATE_POTENTIAL);
-            }
-          }
-          buttons_active = 0;
-        }
-        if (!buttons_active)
-        {
-          button_tmr :> buttons_timeout;
-          buttons_timeout += BUTTON_TIMEOUT_PERIOD;
-        }
-        button_val = new_button_val;
-        break;
-      }
-      case !buttons_active => button_tmr when timerafter(buttons_timeout) :> void:
-      {
-        buttons_active = 1;
-        p_buttons :> button_val;
-        break;
-      }
-#endif
       case i_1722_1_entity.get_control_value(unsigned short control_index,
                                             unsigned int &value_size,
                                             unsigned short &values_length,
@@ -418,6 +323,7 @@ void application_task(client interface avb_interface avb, server interface avb_1
         switch (control_index)
         {
           case DESCRIPTOR_INDEX_CONTROL_IDENTIFY:
+              debug_printf("get_IDENTIFY\n");
               values[0] = aem_identify_control_value;
               value_size = 1;
               values_length = 1;
@@ -426,6 +332,7 @@ void application_task(client interface avb_interface avb, server interface avb_1
           case DESCRIPTOR_INDEX_CONTROL_GAIN_LEFT:  // 0
           case DESCRIPTOR_INDEX_CONTROL_GAIN_RIGHT: // 1
           {
+            debug_printf("get_GAIN control index = %d\n", control_index);
             value_size = values_length = AEM_CONTROL_SIZE_LINEAR_INT16;
             HTON_U16(values, lr_volume[control_index]);
             return_status = AECP_AEM_STATUS_SUCCESS;
@@ -434,6 +341,7 @@ void application_task(client interface avb_interface avb, server interface avb_1
           case DESCRIPTOR_INDEX_CONTROL_MUTE_LEFT:  // 2
           case DESCRIPTOR_INDEX_CONTROL_MUTE_RIGHT: // 3
           {
+            debug_printf("get_MUTE index = %d\n", control_index-2);
             const unsigned channel = control_index-2;
             value_size = values_length = AEM_CONTROL_SIZE_LINEAR_UINT8;
             values[0] = lr_volume[channel];
@@ -457,7 +365,7 @@ void application_task(client interface avb_interface avb, server interface avb_1
               aem_identify_control_value = values[0];
               p_mute_led_remote <: (~0) & ~((int)aem_identify_control_value<<1);
               if (aem_identify_control_value) {
-                debug_printf("IDENTIFY Ping\n");
+                debug_printf("IDENTIFY on\n");
               }
               return_status = AECP_AEM_STATUS_SUCCESS;
             }
@@ -528,6 +436,7 @@ void application_task(client interface avb_interface avb, server interface avb_1
           case DESCRIPTOR_INDEX_SELECTOR_LEFT:
           case DESCRIPTOR_INDEX_SELECTOR_RIGHT:
           {
+            debug_printf("Get_signal_selector\n");
             signal_type = AEM_AUDIO_CLUSTER_TYPE;
             signal_index = lr_channel_assignment[selector_index];
             signal_output = 0;
@@ -548,7 +457,8 @@ void application_task(client interface avb_interface avb, server interface avb_1
           case DESCRIPTOR_INDEX_SELECTOR_LEFT:
           case DESCRIPTOR_INDEX_SELECTOR_RIGHT:
           {
-            if (signal_type != AEM_AUDIO_CLUSTER_TYPE ||
+              debug_printf("Set_signal_selector\n");
+              if (signal_type != AEM_AUDIO_CLUSTER_TYPE ||
                 signal_index >= AVB_MAX_CHANNELS_PER_LISTENER_STREAM) {
               return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
               break;
