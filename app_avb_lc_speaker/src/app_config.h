@@ -37,7 +37,7 @@
 
 #define PORT_ETH_RXCLK     on tile[1]: XS1_PORT_1A
 #define PORT_ETH_ERR       on tile[1]: XS1_PORT_1B
-#define PORT_ETH_RXD       on tile[1]  XS1_PORT_4C
+#define PORT_ETH_RXD       on tile[1]: XS1_PORT_4C
 #define PORT_ETH_RXDV      on tile[1]: XS1_PORT_1D
 #define PORT_ETH_TXCLK     on tile[1]: XS1_PORT_1C
 #define PORT_ETH_TXEN      on tile[1]: XS1_PORT_1E
