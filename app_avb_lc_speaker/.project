@@ -97,4 +97,24 @@
 		<nature>org.eclipse.cdt.managedbuilder.core.ScannerConfigNature</nature>
 		<nature>com.xmos.cdt.core.XdeProjectNature</nature>
 	</natures>
+	<filteredResources>
+		<filter>
+			<id>1422288207283</id>
+			<name></name>
+			<type>10</type>
+			<matcher>
+				<id>org.eclipse.ui.ide.multiFilter</id>
+				<arguments>1.0-name-matches-false-true-\.build</arguments>
+			</matcher>
+		</filter>
+		<filter>
+			<id>1422288207290</id>
+			<name></name>
+			<type>6</type>
+			<matcher>
+				<id>org.eclipse.ui.ide.multiFilter</id>
+				<arguments>1.0-name-matches-false-false-*.xe</arguments>
+			</matcher>
+		</filter>
+	</filteredResources>
 </projectDescription>
