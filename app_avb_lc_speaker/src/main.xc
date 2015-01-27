@@ -23,6 +23,7 @@
 #include "avb_1722_1.h"
 #include "avb_srp.h"
 #include "aem_descriptor_types.h"
+#include "dbcalc.h"
 
 on tile[0]: otp_ports_t otp_ports0 = OTP_PORTS_INITIALIZER;
 avb_ethernet_ports_t avb_ethernet_ports =
@@ -284,13 +285,22 @@ static unsigned abs(int x)
   return (x + mask) ^ mask;
 }
 
+/* Function to convert from 0 to -64 dbFS to 2.30 multiplier format */
+static int log2lin(int vol_log){
+    int vol_mult;
+    vol_mult = AVB_VOLUME_UNITY >> ((0 - vol_log) / 3);
+//TODO - make this accurate, currently using very rough log function
+    return vol_mult;
+}
+
 /** The main application control task **/
 [[combinable]]
 void application_task(client interface avb_interface avb, server interface avb_1722_1_control_callbacks i_1722_1_entity)
 {
   const unsigned default_sample_rate = 48000;
   unsigned lr_channel_assignment[2] = {0, 1};
-  int lr_volume[2] = {0, 0};
+  int lr_volume[2] = {0, 0}; //in db
+  int volume_scaled[2] = {AVB_VOLUME_UNITY, AVB_VOLUME_UNITY}; //in 2.30 signed fixed point
   unsigned char lr_mute[2] = {0, 0};
   unsigned char mute_reg_val[1] = {0};
   int sink_map[AVB_MAX_CHANNELS_PER_LISTENER_STREAM] = {0, 1, -1, -1, -1, -1, -1, -1};
@@ -322,19 +332,13 @@ void application_task(client interface avb_interface avb, server interface avb_1
 
         switch (control_index)
         {
-          case DESCRIPTOR_INDEX_CONTROL_IDENTIFY:
-              debug_printf("get_IDENTIFY\n");
-              values[0] = aem_identify_control_value;
-              value_size = 1;
-              values_length = 1;
-              return_status = AECP_AEM_STATUS_SUCCESS;
-            break;
           case DESCRIPTOR_INDEX_CONTROL_GAIN_LEFT:  // 0
           case DESCRIPTOR_INDEX_CONTROL_GAIN_RIGHT: // 1
           {
             debug_printf("get_GAIN control index = %d\n", control_index);
+            const unsigned channel = control_index;
             value_size = values_length = AEM_CONTROL_SIZE_LINEAR_INT16;
-            HTON_U16(values, lr_volume[control_index]);
+            HTON_U16(values, lr_volume[channel]);
             return_status = AECP_AEM_STATUS_SUCCESS;
             break;
           }
@@ -344,10 +348,17 @@ void application_task(client interface avb_interface avb, server interface avb_1
             debug_printf("get_MUTE index = %d\n", control_index-2);
             const unsigned channel = control_index-2;
             value_size = values_length = AEM_CONTROL_SIZE_LINEAR_UINT8;
-            values[0] = lr_volume[channel];
+            values[0] = lr_mute[channel];
             return_status = AECP_AEM_STATUS_SUCCESS;
             break;
           }
+          case DESCRIPTOR_INDEX_CONTROL_IDENTIFY:
+              debug_printf("get_IDENTIFY\n");
+              values[0] = aem_identify_control_value;
+              value_size = 1;
+              values_length = 1;
+              return_status = AECP_AEM_STATUS_SUCCESS;
+            break;
         }
 
         break;
@@ -360,35 +371,23 @@ void application_task(client interface avb_interface avb, server interface avb_1
         return_status = AECP_AEM_STATUS_NO_SUCH_DESCRIPTOR;
 
         switch (control_index) {
-          case DESCRIPTOR_INDEX_CONTROL_IDENTIFY: {
-            if (values_length == 1) {
-              aem_identify_control_value = values[0];
-              p_mute_led_remote <: (~0) & ~((int)aem_identify_control_value<<1);
-              if (aem_identify_control_value) {
-                debug_printf("IDENTIFY on\n");
-              }
-              return_status = AECP_AEM_STATUS_SUCCESS;
-            }
-            else
-            {
-              return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
-            }
-            break;
-          }
+
           case DESCRIPTOR_INDEX_CONTROL_GAIN_LEFT:  // 0
           case DESCRIPTOR_INDEX_CONTROL_GAIN_RIGHT: // 1
           {
+            unsigned channel = control_index;
             if (values_length == AEM_CONTROL_SIZE_LINEAR_INT16) {
               short volume = NTOH_U16(values);
               if (volume > 0 || volume < -64) {
                 return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
                 break;
               }
-              lr_volume[control_index] = volume;
-              unsigned char volume_reg_val[1];
-              volume_reg_val[0] = abs(lr_volume[control_index]) << 1;
-              debug_printf("Setting chan %d volume to %d db (register val 0x%x)\n", control_index, volume, volume_reg_val[0]);
-//              i2c_master_write_reg(0x48, CODEC_DACA_VOL_ADDR+control_index, volume_reg_val, 1, r_i2c);
+
+              lr_volume[channel] = volume; //Store locally (read by get_control_value and used by mute)
+
+              volume_scaled[channel] = lr_mute[channel] ? 0 : db_to_mult(lr_volume[channel], 0 , 30);
+              debug_printf("Setting channel %d volume to %d db (2.30 mul val 0x%x)\n", channel, volume, volume_scaled[channel]);
+              avb.set_avb_source_volumes(0, volume_scaled, 2);
               return_status = AECP_AEM_STATUS_SUCCESS;
             }
             else {
@@ -412,10 +411,28 @@ void application_task(client interface avb_interface avb, server interface avb_1
                 break;
               }
               lr_mute[channel] = values[0];
-//              i2c_master_write_reg(0x48, CODEC_MUTE_CTRL_ADDR, mute_reg_val, 1, r_i2c);
+
+              volume_scaled[channel] = lr_mute[channel] ? 0 : db_to_mult(lr_volume[channel], 0 , 30);
+              avb.set_avb_source_volumes(0, volume_scaled, 2);
+
               return_status = AECP_AEM_STATUS_SUCCESS;
             }
             else {
+              return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
+            }
+            break;
+          }
+          case DESCRIPTOR_INDEX_CONTROL_IDENTIFY: {
+            if (values_length == 1) {
+              aem_identify_control_value = values[0];
+              p_mute_led_remote <: (~0) & ~((int)aem_identify_control_value<<1);
+              if (aem_identify_control_value) {
+                debug_printf("IDENTIFY on\n");
+              }
+              return_status = AECP_AEM_STATUS_SUCCESS;
+            }
+            else
+            {
               return_status = AECP_AEM_STATUS_BAD_ARGUMENTS;
             }
             break;
