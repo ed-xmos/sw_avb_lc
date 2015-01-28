@@ -24,6 +24,8 @@
 #include "avb_srp.h"
 #include "aem_descriptor_types.h"
 #include "dbcalc.h"
+#include "SpdifTransmit.h"
+#include "spdif_ctrl.h"
 
 on tile[0]: otp_ports_t otp_ports0 = OTP_PORTS_INITIALIZER;
 avb_ethernet_ports_t avb_ethernet_ports =
@@ -110,7 +112,7 @@ media_input_fifo_t ififos[AVB_NUM_MEDIA_INPUTS];
 
 #if SPDIF_OUT
 on tile[0]: out buffered port:32 p_spdif_tx = XS1_PORT_1J;
-on tile[0]: clock ck_spdif_tx = XS1_CLKBLK_3;
+on tile[0]: clock ck_spdif_tx = XS1_CLKBLK_5;
 #endif
 
 [[combinable]] void application_task(client interface avb_interface avb, server interface avb_1722_1_control_callbacks i_1722_1_entity);
@@ -168,6 +170,7 @@ enum ptp_chans {
   NUM_PTP_CHANS
 };
 
+
 int main(void)
 {
   // Ethernet channels
@@ -202,6 +205,7 @@ int main(void)
 
 #ifdef SPDIF_OUT
     chan c_spdif_tx;
+    interface spdif_sr_ctl i_spdif_ctrl;
 #endif
 
   par
@@ -228,34 +232,27 @@ int main(void)
 #if AVB_DEMO_ENABLE_TALKER
       init_media_input_fifos(ififos, ififo_data, AVB_NUM_MEDIA_INPUTS);
 #endif
-
 #if AVB_DEMO_ENABLE_LISTENER
       init_media_output_fifos(ofifos, ofifo_data, AVB_NUM_MEDIA_OUTPUTS);
 #endif
-
-      i2s_master(i2s_ports,
+      {
+        SpdifTransmitPortConfig(p_spdif_tx, ck_spdif_tx, i2s_ports.p_mclk);
+        par{
+          i2s_master(i2s_ports,
                  p_aud_din, AVB_NUM_MEDIA_INPUTS,
                  p_aud_dout, AVB_NUM_MEDIA_OUTPUTS,
                  MASTER_TO_WORDCLOCK_RATIO,
                  ififos,
                  ofifos,
                  c_media_ctl[0],
-                 0);
-#ifdef SPDIF_OUT
-
-      {
-          SpdifTransmitPortConfig(p_spdif_tx, ck_spdif_tx, i2s_ports.p_mclk);
-          SpdifTransmit(p_spdif_tx, c_spdif_tx);
-/*
-                 outuint(c_spdif_out, curSamFreq);
-                outuint(c_spdif_out, mClk);
-                   outuint(c_spd_out, sampleL);
-                    outuint(c_spd_out, sampleR);
-                 outct(c_spdif_out, XS1_CT_END);
- */
+                 0,
+                 c_spdif_tx,
+                 i_spdif_ctrl);
+          while(1) SpdifTransmit(p_spdif_tx, c_spdif_tx);
+        }
       }
-#endif
     }
+
 
 #if AVB_DEMO_ENABLE_TALKER
     // AVB Talker - must be on the same tile as the audio interface
@@ -282,7 +279,8 @@ int main(void)
                   c_talker_ctl,
                   c_mac_tx[MAC_TX_TO_AVB_MANAGER],
                   i_media_clock_ctl,
-                  c_ptp[PTP_TO_AVB_MANAGER]);
+                  c_ptp[PTP_TO_AVB_MANAGER],
+                  i_spdif_ctrl);
       avb_srp_task(i_avb[AVB_MANAGER_TO_SRP],
                    i_srp,
                    c_mac_rx[MAC_RX_TO_SRP],
@@ -307,14 +305,6 @@ static unsigned abs(int x)
 {
   int const mask = x >> sizeof(int) * 8 - 1;
   return (x + mask) ^ mask;
-}
-
-/* Function to convert from 0 to -64 dbFS to 2.30 multiplier format */
-static int log2lin(int vol_log){
-    int vol_mult;
-    vol_mult = AVB_VOLUME_UNITY >> ((0 - vol_log) / 3);
-//TODO - make this accurate, currently using very rough log function
-    return vol_mult;
 }
 
 /** The main application control task **/
