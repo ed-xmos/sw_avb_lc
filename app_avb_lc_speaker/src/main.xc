@@ -1,4 +1,4 @@
-#include <platform.h>
+ #include <platform.h>
 #include <print.h>
 #include <xccompat.h>
 #include <string.h>
@@ -89,6 +89,7 @@ on tile[0]: in buffered port:32 p_aud_din[AVB_DEMO_NUM_CHANNELS/2] = PORT_SDATA_
   #define p_aud_din null
 #endif
 
+
 #if AVB_XA_SK_AUDIO_PLL_SLICE
 on tile[0]: out port p_audio_shared = PORT_AUDIO_SHARED;
 #endif
@@ -105,6 +106,11 @@ media_input_fifo_data_t ififo_data[AVB_NUM_MEDIA_INPUTS];
 media_input_fifo_t ififos[AVB_NUM_MEDIA_INPUTS];
 #else
   #define ififos null
+#endif
+
+#if SPDIF_OUT
+on tile[0]: out buffered port:32 p_spdif_tx = XS1_PORT_1J;
+on tile[0]: clock ck_spdif_tx = XS1_CLKBLK_3;
 #endif
 
 [[combinable]] void application_task(client interface avb_interface avb, server interface avb_1722_1_control_callbacks i_1722_1_entity);
@@ -194,6 +200,10 @@ int main(void)
   interface srp_interface i_srp;
   interface avb_1722_1_control_callbacks i_1722_1_entity;
 
+#ifdef SPDIF_OUT
+    chan c_spdif_tx;
+#endif
+
   par
   {
     on ETHERNET_DEFAULT_TILE: avb_ethernet_server(avb_ethernet_ports,
@@ -231,6 +241,20 @@ int main(void)
                  ofifos,
                  c_media_ctl[0],
                  0);
+#ifdef SPDIF_OUT
+
+      {
+          SpdifTransmitPortConfig(p_spdif_tx, ck_spdif_tx, i2s_ports.p_mclk);
+          SpdifTransmit(p_spdif_tx, c_spdif_tx);
+/*
+                 outuint(c_spdif_out, curSamFreq);
+                outuint(c_spdif_out, mClk);
+                   outuint(c_spd_out, sampleL);
+                    outuint(c_spd_out, sampleR);
+                 outct(c_spdif_out, XS1_CT_END);
+ */
+      }
+#endif
     }
 
 #if AVB_DEMO_ENABLE_TALKER
