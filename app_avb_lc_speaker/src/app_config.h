@@ -14,7 +14,7 @@
 #define AVB_DEMO_NUM_CHANNELS 2
 
 /** Enabled SPDIF ouput */
-#define SPDIF_OUT             1
+//#define SPDIF_OUT             1
 
 
 /* Volume control in Media FIFO */

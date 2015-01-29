@@ -24,8 +24,10 @@
 #include "avb_srp.h"
 #include "aem_descriptor_types.h"
 #include "dbcalc.h"
+#if SPDIF_OUT
 #include "SpdifTransmit.h"
 #include "spdif_ctrl.h"
+#endif
 
 on tile[0]: otp_ports_t otp_ports0 = OTP_PORTS_INITIALIZER;
 avb_ethernet_ports_t avb_ethernet_ports =
@@ -235,6 +237,8 @@ int main(void)
 #if AVB_DEMO_ENABLE_LISTENER
       init_media_output_fifos(ofifos, ofifo_data, AVB_NUM_MEDIA_OUTPUTS);
 #endif
+
+#if SPDIF_OUT
       {
         SpdifTransmitPortConfig(p_spdif_tx, ck_spdif_tx, i2s_ports.p_mclk);
         par{
@@ -251,6 +255,16 @@ int main(void)
           while(1) SpdifTransmit(p_spdif_tx, c_spdif_tx);
         }
       }
+#else
+      i2s_master(i2s_ports,
+                       p_aud_din, AVB_NUM_MEDIA_INPUTS,
+                       p_aud_dout, AVB_NUM_MEDIA_OUTPUTS,
+                       MASTER_TO_WORDCLOCK_RATIO,
+                       ififos,
+                       ofifos,
+                       c_media_ctl[0],
+                       0);
+#endif
     }
 
 
@@ -279,8 +293,12 @@ int main(void)
                   c_talker_ctl,
                   c_mac_tx[MAC_TX_TO_AVB_MANAGER],
                   i_media_clock_ctl,
-                  c_ptp[PTP_TO_AVB_MANAGER],
-                  i_spdif_ctrl);
+                  c_ptp[PTP_TO_AVB_MANAGER]
+#if SPDIF_OUT
+                  ,i_spdif_ctrl
+#endif
+                  );
+
       avb_srp_task(i_avb[AVB_MANAGER_TO_SRP],
                    i_srp,
                    c_mac_rx[MAC_RX_TO_SRP],
